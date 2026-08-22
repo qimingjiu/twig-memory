@@ -74,7 +74,7 @@ export function fragView(f: Fragment): { id: string; date: string; title: string
 const HIGH_RISK_LEXICON = /(医院|复查|体检|手术|吃药|药物|失眠|抑郁|自杀|自残|轻生|想死|伤害自己|伤害他人|人身安全|安全隐患|债务|贷款|失业|晕倒|急诊)/
 /** 危机信号词表（§7.1）：窗口期内命中 → 立即中止全部对照，恢复正常干预。
  *  P1-5 修复：不想活(?!动) 避免匹配「不想活动」，但不影响「不想活的念头」「不想活了」 */
-const CRISIS_LEXICON = /(自杀|自残|轻生|不想活(?!动)|想死|伤害自己|活不下去)/
+export const CRISIS_LEXICON = /(自杀|自残|轻生|不想活(?!动)|想死|伤害自己|活不下去)/
 
 export interface MuninnState {
   fragments: Fragment[]
