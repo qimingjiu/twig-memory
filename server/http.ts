@@ -577,6 +577,22 @@ const server = createServer(async (req, res) => {
       return send(res, 200, { thread, events })
     }
 
+        /* ---------- 静态文件兜底：前端 Memory Book ---------- */
+    const STATIC_DIR = process.env.MUNINN_STATIC_DIR || join(dirname(fileURLToPath(import.meta.url)), '..', 'dist')
+    if (req.method === 'GET' && existsSync(STATIC_DIR)) {
+      const MIME: Record<string, string> = {
+        '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+        '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2',
+      }
+      let filePath = join(STATIC_DIR, url.pathname === '/' ? 'index.html' : url.pathname)
+      if (!existsSync(filePath)) filePath = join(STATIC_DIR, 'index.html') // SPA fallback
+      if (existsSync(filePath) && statSync(filePath).isFile()) {
+        const ext = '.' + filePath.split('.').pop()!
+        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' })
+        return res.end(readFileSync(filePath))
+      }
+    }
     return send(res, 404, { error: 'not found' })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
