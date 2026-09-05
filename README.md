@@ -11,6 +11,13 @@
 
 ## 一分钟跑起来
 
+**你想做什么？**
+
+- **自己用 / 先看看「记忆书」** → 跟完本节四步，浏览器里翻开它
+- **接进手机 App / AI 客户端**（RikkaHub / Kelivo / Operit 等）→ 用[远程 MCP](server/README.md)，手机上什么都不用装
+- **开发者接 API / 跑评测** → [server/README.md](server/README.md) 完整文档
+- **装不上？** 把 [docs/DEPLOY-FOR-AI.md](docs/DEPLOY-FOR-AI.md) 整个发给你的 AI，说一句「照这个带我装」
+
 ### 1. 克隆并安装
 
 ```bash
@@ -19,12 +26,16 @@ cd twig-memory
 npm install
 ```
 
-### 2. 配置 LLM Key
+需要 Node.js 22 或更新（底线 20.19；`node -v` 看一眼）。
+
+### 2. 配置 LLM Key（可选，但推荐）
 
 ```bash
 # 新建 .env.local（已被 .gitignore 排除）
 KIMI_API_KEY=sk-你的-Moonshot-API-Key
 ```
+
+不配也能跑：引擎自动回退规则判定，基础功能照常。但反刍、盲推导审计、日记与便签生成这些标注「需 key」的 LLM 功能会不可用——想见到完整的衔枝，建议配上。
 
 ### 3. 启动服务端
 
@@ -32,7 +43,15 @@ KIMI_API_KEY=sk-你的-Moonshot-API-Key
 npm run server:http   # HTTP API + 远程 MCP，默认 http://localhost:7300
 ```
 
-然后你的 agent 把事件 POST 到 `/v1/ingest`，每次回复前 GET `/v1/context` 把记忆注入 system prompt，就完成了。
+### 4. 打开记忆书（另开一个终端）
+
+```bash
+npm run dev   # 记忆书前端，默认 http://localhost:7100
+```
+
+浏览器打开 **http://localhost:7100** ——今日扉页 / 记忆书 / 故事线 / 理解文档 / 自检日志 / 设置，都在这本「书」里。
+
+刚翻开时书是空的，正常：**记忆书是引擎的展示窗**，记忆来自你接上去的 AI。客户端挂上[远程 MCP](server/README.md) 后正常聊天，事件就会流进引擎，日记、心迹、便签、印章才会一天天长出来。开发者也可以直接把事件 POST 到 `/v1/ingest`、每次回复前 GET `/v1/context` 注入 system prompt。
 
 > 完整 API 文档、MCP 挂载方式、Zeabur 一键部署见 [server/README.md](server/README.md)。
 
@@ -133,6 +152,7 @@ twig-memory/
 
 ## 深入阅读
 
+- [docs/DEPLOY-FOR-AI.md](docs/DEPLOY-FOR-AI.md) —— 托管安装手册（给 AI 看的版本；装不上时把它发给你的 AI）
 - [server/README.md](server/README.md) —— API 文档、部署、评测管线
 - [docs/雾尼Muninn-技术设计文档-v1.3.md](docs/雾尼Muninn-技术设计文档-v1.3.md) —— 完整架构与机制论证
 - [docs/新前端技术设计文档-v1.0.md](docs/新前端技术设计文档-v1.0.md) —— 记忆书前端与情感层（日记/心迹/便签/印章）设计
