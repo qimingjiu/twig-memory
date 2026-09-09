@@ -15,12 +15,16 @@ COPY server ./server
 ENV NODE_ENV=production
 ENV MUNINN_DATA_DIR=/data
 
-# 创建数据目录并授权给 node 用户（Railway volume 挂载到 /data 时也需要 node 可写）
-RUN mkdir -p /data && chown node:node /data
+# 安装 su-exec（运行时降权用）并创建数据目录
+RUN apk add --no-cache su-exec && mkdir -p /data && chown node:node /data
 
 # P2-12：不以 root 运行
 USER node
 
 EXPOSE 7300
 
+# entrypoint：修复 volume 运行时权限后降权启动
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "--import", "tsx", "server/http.ts"]
