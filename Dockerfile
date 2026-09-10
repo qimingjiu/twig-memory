@@ -14,15 +14,8 @@ COPY server ./server
 
 ENV NODE_ENV=production
 ENV MUNINN_DATA_DIR=/data
-# 安装 su-exec（运行时降权用）并创建数据目录
-RUN apk add --no-cache su-exec && mkdir -p /data && chown node:node /data
-
-# entrypoint：在切到 node 用户前复制并设权（root）
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# P2-12：不以 root 运行
-USER node
+# Railway 容器限制 chown/su-exec 等 capability，因此直接以 root 运行
+# 数据目录 /data 由 Railway Volume 挂载，root 有权写入
+RUN mkdir -p /data
 EXPOSE 7300
-ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "--import", "tsx", "server/http.ts"]
