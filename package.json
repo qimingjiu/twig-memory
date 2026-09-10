@@ -1,7 +1,7 @@
 {
   "name": "twig-memory",
   "version": "0.1.0",
-  "description": "衔枝 Twig · 叙事记忆引擎 — 让 AI 在长程关系中记住「你」，而不只是聊天记录",
+  "description": "\u8854\u679d Twig \u00b7 \u53d9\u4e8b\u8bb0\u5fc6\u5f15\u64ce \u2014 \u8ba9 AI \u5728\u957f\u7a0b\u5173\u7cfb\u4e2d\u8bb0\u4f4f\u300c\u4f60\u300d\uff0c\u800c\u4e0d\u53ea\u662f\u804a\u5929\u8bb0\u5f55",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -59,11 +59,11 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "vaul": "^1.1.2",
-    "zod": "^4.3.5"
+    "zod": "^4.3.5",
+    "tsx": "^4.20.0",
+    "@modelcontextprotocol/sdk": "^1.17.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.0",
-    "tsx": "^4.20.0",
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
