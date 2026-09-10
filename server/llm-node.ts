@@ -45,7 +45,10 @@ export function registerNodeTransport(): boolean {
   loadEnvLocal()
   const apiKey = process.env.MUNINN_API_KEY || process.env.KIMI_API_KEY
   if (!apiKey) return false
-  const model = process.env.MUNINN_MODEL || 'moonshot-v1-8k'
+  const modelRaw = process.env.MUNINN_MODEL || 'moonshot-v1-8k'
+  // 废弃模型自动映射（Moonshot 已下架 moonshot-v1-8k，替换为 kimi-k2.6）
+  const MODEL_ALIAS: Record<string, string> = { 'moonshot-v1-8k': 'kimi-k2.6' }
+  const model = MODEL_ALIAS[modelRaw] ?? modelRaw
   // 归一化：容忍用户把 base 写成 .../v1（代码会自行拼接 /v1/chat/completions）
   const baseUrl = (process.env.MUNINN_BASE_URL || 'https://api.moonshot.cn').replace(/\/+$/, '').replace(/\/v1$/, '')
 
