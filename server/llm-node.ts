@@ -67,7 +67,8 @@ export function registerNodeTransport(): boolean {
           body: JSON.stringify({
             // 按调用覆盖（异源反证生成的第二模型），缺省回落默认模型
             model: opts?.model || model,
-            temperature: opts?.temperature ?? 0.3,
+            // kimi-k2.6 只允许 temperature=1，强制覆盖
+            temperature: (opts?.model || model).startsWith('kimi-k2') ? 1 : (opts?.temperature ?? 0.3),
             max_tokens: adaptiveMax ?? 3000,
             messages,
           }),
@@ -79,7 +80,9 @@ export function registerNodeTransport(): boolean {
         }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const data: any = await resp.json()
-        const raw = data?.choices?.[0]?.message?.content
+        const msg = data?.choices?.[0]?.message || {}
+        // kimi-k2.6 等思考型模型的回复在 reasoning_content 而非 content
+        const raw = msg.content || msg.reasoning_content || ''
         // 自适应：思考型模型 reasoning 耗尽 max_tokens 时自动增大重试
         const finishReason = data?.choices?.[0]?.finish_reason
         const reasoningTokens = data?.usage?.completion_tokens_details?.reasoning_tokens ?? 0

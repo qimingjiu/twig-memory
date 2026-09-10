@@ -42,8 +42,7 @@ export class JsonStore<T> {
 
   save(userId: string, state: T): void {
     const f = this.file(userId)
-    const tmp = `${f}.tmp`
-    writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
-    renameSync(tmp, f)
+    // 绕过 Railway Volume 的 tmp 文件权限限制（EACCES），直接写入最终文件
+    writeFileSync(f, JSON.stringify(state, null, 2), 'utf8')
   }
 }

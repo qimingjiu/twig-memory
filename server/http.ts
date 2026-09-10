@@ -577,6 +577,43 @@ const server = createServer(async (req, res) => {
       return send(res, 200, { thread, events })
     }
 
+    /* ---------- 前端静态文件服务 ---------- */
+    const DIST_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist')
+    const reqPath = url.pathname === '/' ? '/index.html' : url.pathname
+    const filePath = join(DIST_DIR, reqPath)
+    if (existsSync(filePath) && !statSync(filePath).isDirectory()) {
+      const ext = filePath.split('.').pop() ?? ''
+      const mime: Record<string, string> = {
+        html: 'text/html; charset=utf-8',
+        css: 'text/css; charset=utf-8',
+        js: 'application/javascript; charset=utf-8',
+        json: 'application/json',
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        svg: 'image/svg+xml',
+        ico: 'image/x-icon',
+        webp: 'image/webp',
+        woff: 'font/woff',
+        woff2: 'font/woff2',
+        ttf: 'font/ttf',
+        map: 'application/json',
+      }
+      res.writeHead(200, { 'Content-Type': mime[ext] || 'application/octet-stream' })
+      res.end(readFileSync(filePath))
+      return
+    }
+    // SPA fallback：非 API / MCP 路径都返回 index.html（React Router 前端路由）
+    if (!url.pathname.startsWith('/v1/') && url.pathname !== '/health' && url.pathname !== '/mcp' && url.pathname !== '/sse' && !url.pathname.startsWith('/sse/')) {
+      const spaPath = join(DIST_DIR, 'index.html')
+      if (existsSync(spaPath)) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(readFileSync(spaPath))
+        return
+      }
+    }
+
     return send(res, 404, { error: 'not found' })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
