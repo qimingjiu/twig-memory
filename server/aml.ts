@@ -39,6 +39,7 @@ const llmReady = !!process.env.MUNINN_API_KEY || !!process.env.KIMI_API_KEY
 const SEARCH_DEADLINE_MS = Number(process.env.AML_SEARCH_DEADLINE_MS) || 25000
 const EMBED_TIMEOUT_MS = Number(process.env.AML_EMBED_TIMEOUT_MS) || 10000
 const HYDE_TIMEOUT_MS = Number(process.env.AML_HYDE_TIMEOUT_MS) || 12000
+const INDEX_CACHE_MAX = Number(process.env.AML_INDEX_CACHE_MAX) || 100
 
 const store = new JsonStore<UserState>(DATA_DIR)
 
@@ -154,21 +155,50 @@ async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T>
   const prev = userQueues.get(userId) ?? Promise.resolve()
   let release!: () => void
   const gate = new Promise<void>((r) => { release = r })
-  userQueues.set(userId, prev.then(() => gate))
+  const tail = prev.then(() => gate)
+  userQueues.set(userId, tail)
   await prev
-  try { return await fn() } finally { release() }
+  try { return await fn() } finally {
+    release()
+    // 无后续排队时清理该用户的锁条目，避免 lock table 随 user_id 数量无限增长
+    if (userQueues.get(userId) === tail) userQueues.delete(userId)
+  }
 }
 
-/* ---------------- 索引缓存 ---------------- */
+/* ---------------- 索引缓存（LRU，有界） ---------------- */
 
 const indexCache = new Map<string, UserIndex>()
+
+function touchIndexCache(userId: string): UserIndex | undefined {
+  const idx = indexCache.get(userId)
+  if (idx) {
+    // 最近访问移到队尾
+    indexCache.delete(userId)
+    indexCache.set(userId, idx)
+  }
+  return idx
+}
+
+function setIndexCache(userId: string, idx: UserIndex): void {
+  if (indexCache.has(userId)) {
+    indexCache.delete(userId)
+  } else if (indexCache.size >= INDEX_CACHE_MAX) {
+    const oldest = indexCache.keys().next().value as string | undefined
+    if (oldest !== undefined) indexCache.delete(oldest)
+  }
+  indexCache.set(userId, idx)
+}
+
+function deleteIndexCache(userId: string): void {
+  indexCache.delete(userId)
+}
 
 async function buildUserIndex(userId: string): Promise<UserIndex | null> {
   const state = store.load(userId)
   if (!state || state.fragments.length === 0) return null
 
   const snapshot = JSON.stringify(state.fragments)
-  const cached = indexCache.get(userId)
+  const cached = touchIndexCache(userId)
   if (cached && cached.snapshot === snapshot) return cached
 
   const frags = state.fragments.map(enrich)
@@ -183,7 +213,7 @@ async function buildUserIndex(userId: string): Promise<UserIndex | null> {
     }
   }
 
-  indexCache.set(userId, idx)
+  setIndexCache(userId, idx)
   return idx
 }
 
@@ -255,7 +285,7 @@ async function handleAdd(body: AddBody): Promise<{ status: number; payload: unkn
     }
     state.seq = seq
     store.save(body.user_id, state)
-    indexCache.delete(body.user_id)
+    deleteIndexCache(body.user_id)
   })
 
   return {
