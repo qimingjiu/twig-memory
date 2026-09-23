@@ -28,7 +28,7 @@ const shardDir = (): string => process.env.MUNINN_EMBED_CACHE_DIR || join(here, 
 
 /* ---------------- 分片缓存（每实例一文件，中断只损当前实例） ---------------- */
 
-interface ShardStore { data: Record<string, number[]>; dirty: boolean }
+interface ShardStore { data: Record<string, number[]>; dirty: boolean; savedAt: number }
 const shardStores = new Map<string, ShardStore>()
 
 function getShardStore(shardId: string): ShardStore {
@@ -37,9 +37,9 @@ function getShardStore(shardId: string): ShardStore {
     const file = join(shardDir(), `${shardId}.json`)
     try {
       const data = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as Record<string, number[]> : {}
-      s = { data, dirty: false }
+      s = { data, dirty: false, savedAt: 0 }
     } catch {
-      s = { data: {}, dirty: false }
+      s = { data: {}, dirty: false, savedAt: 0 }
     }
     shardStores.set(shardId, s)
   }
@@ -50,9 +50,56 @@ function saveShard(shardId: string): void {
   const s = shardStores.get(shardId)
   if (!s || !s.dirty) return
   mkdirSync(shardDir(), { recursive: true })
-  // 分片文件小（单实例 ~500 条 × 1024 维 ≈ 4MB），不会撞 V8 字符串上限
   writeFileSync(join(shardDir(), `${shardId}.json`), JSON.stringify(s.data), 'utf8')
   s.dirty = false
+  s.savedAt = Date.now()
+}
+
+/** AML 的 shard 可达上万条（JSON 上百 MB），每批全量同步重写会把事件循环饿死。
+ *  构建期间最多每 SAVE_INTERVAL_MS 落一次盘，崩溃最多损失一个间隔的嵌入进度。 */
+const SAVE_INTERVAL_MS = 10000
+
+function saveShardThrottled(shardId: string): void {
+  const s = shardStores.get(shardId)
+  if (!s || !s.dirty || Date.now() - s.savedAt < SAVE_INTERVAL_MS) return
+  saveShard(shardId)
+}
+
+/** 构建完成后调用：强制落盘并释放内存副本（向量与 UserIndex.fragVecs 共享引用，不丢数据），
+ *  下次用到时从磁盘重读。防止 shardStores 无界驻留把 2C4GB 堆爆。 */
+export function releaseShard(shardId: string): void {
+  try { saveShard(shardId) } catch (err) {
+    console.warn(`[embed] 分片落盘失败（shard=${shardId}）：${err instanceof Error ? err.message : err}`)
+  }
+  shardStores.delete(shardId)
+}
+
+/* ---------------- 查询向量缓存（纯内存、有界 LRU；查询向量一次性语义，不落盘、不进分片缓存） ---------------- */
+
+const QUERY_CACHE_MAX = 512
+const queryCache = new Map<string, number[]>()
+
+/** 单条查询嵌入：结果与 embedTexts 完全一致（同 API 同模型同单位化），但避开分片缓存的整文件重写 */
+export async function embedQuery(text: string): Promise<number[]> {
+  loadEnvLocal()
+  const apiKey = process.env.SF_API_KEY || process.env.SILICONFLOW_API_KEY
+  if (!apiKey) throw new Error('缺 SF_API_KEY / SILICONFLOW_API_KEY')
+  const model = process.env.MUNINN_EMBED_MODEL || 'BAAI/bge-m3'
+  const baseUrl = (process.env.SF_BASE_URL || 'https://api.siliconflow.cn').replace(/\/+$/, '').replace(/\/v1$/, '')
+  const key = cacheKey(model, text)
+  const hit = queryCache.get(key)
+  if (hit) {
+    queryCache.delete(key)
+    queryCache.set(key, hit)
+    return hit
+  }
+  const [vec] = await embedBatch([text], model, baseUrl, apiKey)
+  if (queryCache.size >= QUERY_CACHE_MAX) {
+    const oldest = queryCache.keys().next().value
+    if (oldest !== undefined) queryCache.delete(oldest)
+  }
+  queryCache.set(key, vec)
+  return vec
 }
 
 /* ---------------- 遗留单文件缓存（core.ts 引擎路径用；eval 已迁移到分片） ---------------- */
@@ -185,9 +232,10 @@ export async function embedTexts(texts: string[], shardId?: string): Promise<num
         store[cacheKey(model, c.text)] = vecs[j]
         out[c.i] = vecs[j]
       })
-      if (shardStore) { shardStore.dirty = true; saveShard(shardId!) }
+      if (shardStore) { shardStore.dirty = true; saveShardThrottled(shardId!) }
       else { legacyCacheDirty = true; legacyCacheSave() }
     }
+    if (shardStore) saveShard(shardId!)
   }
   return out as number[][]
 }

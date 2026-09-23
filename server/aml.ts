@@ -17,7 +17,7 @@ import {
   fuseRrf,
   expandQueryBatch,
 } from './eval-locomo.ts'
-import { embedTexts, embeddingsAvailable } from './embed-node.ts'
+import { embedTexts, embeddingsAvailable, embedQuery, releaseShard } from './embed-node.ts'
 import { loadEnvLocal, registerNodeTransport } from './llm-node.ts'
 
 /* ---------------- 配置 ---------------- */
@@ -40,6 +40,8 @@ const SEARCH_DEADLINE_MS = Number(process.env.AML_SEARCH_DEADLINE_MS) || 25000
 const EMBED_TIMEOUT_MS = Number(process.env.AML_EMBED_TIMEOUT_MS) || 10000
 const HYDE_TIMEOUT_MS = Number(process.env.AML_HYDE_TIMEOUT_MS) || 12000
 const INDEX_CACHE_MAX = Number(process.env.AML_INDEX_CACHE_MAX) || 100
+/** 同时进行的索引构建数上限：单次全量嵌入驻留一个分片缓存（大 shard 上百 MB），无界并发会在小机上堆爆 */
+const INDEX_BUILD_CONCURRENCY = Math.max(1, Number(process.env.AML_INDEX_BUILD_CONCURRENCY) || 3)
 
 const store = new JsonStore<UserState>(DATA_DIR)
 
@@ -193,6 +195,26 @@ function deleteIndexCache(userId: string): void {
   indexCache.delete(userId)
 }
 
+/* ---------------- 索引构建并发闸门 ---------------- */
+
+let buildSlots = INDEX_BUILD_CONCURRENCY
+const buildWaiters: Array<() => void> = []
+
+async function acquireBuildSlot(): Promise<void> {
+  if (buildSlots > 0) { buildSlots--; return }
+  await new Promise<void>((r) => buildWaiters.push(r))
+}
+
+function releaseBuildSlot(): void {
+  const next = buildWaiters.shift()
+  if (next) next()
+  else buildSlots++
+}
+
+/* ---------------- 索引构建（in-flight 去重：同 user 并发 search 共享同一次构建） ---------------- */
+
+const indexBuilds = new Map<string, Promise<UserIndex | null>>()
+
 async function buildUserIndex(userId: string): Promise<UserIndex | null> {
   const state = store.load(userId)
   if (!state || state.fragments.length === 0) return null
@@ -201,20 +223,37 @@ async function buildUserIndex(userId: string): Promise<UserIndex | null> {
   const cached = touchIndexCache(userId)
   if (cached && cached.snapshot === snapshot) return cached
 
-  const frags = state.fragments.map(enrich)
-  const retriever = buildRetriever(frags)
-  const idx: UserIndex = { frags, fragVecs: null, retriever, snapshot }
+  const inflight = indexBuilds.get(userId)
+  if (inflight) return inflight
 
-  if (EMBED_ENABLED && embeddingsAvailable()) {
+  const building = (async () => {
+    await acquireBuildSlot()
     try {
-      idx.fragVecs = await embedTexts(frags.map((f) => `${f.text} ${f.date}`), safeFileName(userId))
-    } catch (err) {
-      console.error(`[aml] 用户 ${userId} 嵌入失败，回退纯 BM25：`, err instanceof Error ? err.message : err)
-    }
-  }
+      const frags = state.fragments.map(enrich)
+      const retriever = buildRetriever(frags)
+      const idx: UserIndex = { frags, fragVecs: null, retriever, snapshot }
 
-  setIndexCache(userId, idx)
-  return idx
+      if (EMBED_ENABLED && embeddingsAvailable()) {
+        try {
+          idx.fragVecs = await embedTexts(frags.map((f) => `${f.text} ${f.date}`), safeFileName(userId))
+        } catch (err) {
+          console.error(`[aml] 用户 ${userId} 嵌入失败，回退纯 BM25：`, err instanceof Error ? err.message : err)
+        }
+      }
+
+      setIndexCache(userId, idx)
+      return idx
+    } finally {
+      releaseBuildSlot()
+      releaseShard(safeFileName(userId))
+    }
+  })()
+  indexBuilds.set(userId, building)
+  try {
+    return await building
+  } finally {
+    if (indexBuilds.get(userId) === building) indexBuilds.delete(userId)
+  }
 }
 
 /* ---------------- BM25 打分（仅用于响应 score） ---------------- */
@@ -409,8 +448,8 @@ async function handleSearch(body: SearchBody): Promise<{ status: number; payload
     vec = await runWithRetry(
       '向量',
       async () => {
-        const qVecs = await embedTexts([hydeQuery], safeFileName(body.user_id))
-        return topByVector(idx.frags, idx.fragVecs!, qVecs[0], k * 2) as FragPlus[]
+        const qVec = await embedQuery(hydeQuery)
+        return topByVector(idx.frags, idx.fragVecs!, qVec, k * 2) as FragPlus[]
       },
       EMBED_TIMEOUT_MS,
       deadlineMs,
