@@ -42,7 +42,10 @@ export interface SearchDependencies {
   timeoutMs?: number
 }
 const defaultDependencies: SearchDependencies = {
-  available: () => process.env.MUNINN_SEARCH_EMBED !== '0' && embeddingsAvailable(),
+  available: () => {
+    const available = embeddingsAvailable() // Loads .env.local before reading the runtime override.
+    return process.env.MUNINN_SEARCH_EMBED !== '0' && available
+  },
   embed: embedTexts,
 }
 
