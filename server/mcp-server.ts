@@ -11,12 +11,13 @@ import * as Journal from './services/journal'
 import * as Soliloquy from './services/soliloquy'
 import { isValidStampType } from '../shared/stamps'
 import { generateJournalDraft } from '../visualizer/engine/llm'
+import { listFragments, listFragmentsSchema, searchFragments, searchFragmentsSchema } from './services/fragments'
 
 const TZ = process.env.MUNINN_TZ || 'Asia/Shanghai'
 function todayStr(): string { return new Date().toLocaleDateString('sv-SE', { timeZone: TZ }) }
 
 export function createMcpServer(manager: EngineManager): McpServer {
-  const server = new McpServer({ name: 'muninn-memory', version: '0.1.0' })
+  const server = new McpServer({ name: 'muninn-memory', version: '0.3.2' })
 
   server.registerTool(
     'memory_ingest',
@@ -39,13 +40,41 @@ export function createMcpServer(manager: EngineManager): McpServer {
   server.registerTool(
     'memory_context',
     {
-      description: '取该用户的叙事上下文包：进行中的线索、对用户的当前理解（带置信度）、近期事件。promptText 注入位置按接入形态选（两法等价）：多轮常驻宿主拼进本轮 user 消息头部（护住前缀缓存，参考 host-loop）；单轮无状态注入 system prompt 末尾即可。',
+      description: '取该用户的叙事上下文包：进行中的线索、对用户的当前理解（带置信度）、近期事件。recentFragments 仅为最近 5 条事件窗口，不代表全部记忆；查询旧事先用 memory_search_fragments，逐页查账用 memory_list_fragments，不能因本窗口没有就断言遗忘。promptText 注入位置按接入形态选（两法等价）：多轮常驻宿主拼进本轮 user 消息头部（护住前缀缓存，参考 host-loop）；单轮无状态注入 system prompt 末尾即可。',
       inputSchema: { userId: z.string().describe('用户标识') },
     },
     async ({ userId }) => {
       const packet = manager.get(userId).getContextPacket(userId)
       manager.persist(userId)
       return { content: [{ type: 'text', text: JSON.stringify(packet, null, 2) }] }
+    },
+  )
+
+  server.registerTool(
+    'memory_list_fragments',
+    {
+      description: '按最新在前的存储顺序分页查看完整历史碎片，核实旧记忆是否仍在；返回原文与本人修正标注。默认排除影子碎片，includeShadow=true 可查情感层来源。',
+      inputSchema: listFragmentsSchema.shape,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async (input) => {
+      const options = listFragmentsSchema.parse(input)
+      const result = listFragments(manager.get(options.userId).getState().fragments, options)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+    },
+  )
+
+  server.registerTool(
+    'memory_search_fragments',
+    {
+      description: '查询该用户全部历史事实碎片（不限近期窗口）。支持中文、英文、日期与碎片 ID；无嵌入 key 时用 BM25，有 key 时加向量 RRF，失败降级。返回完整正文与本人修正；score 是排序分数而非事实置信度。未命中不代表记忆已删除，可改关键词或分页查账。',
+      inputSchema: searchFragmentsSchema.shape,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async (input) => {
+      const { userId, query, k } = searchFragmentsSchema.parse(input)
+      const result = await searchFragments(manager.get(userId).getState().fragments, query, k)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
     },
   )
 

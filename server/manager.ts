@@ -47,7 +47,7 @@ export class EngineManager {
   }
 
   /** 触发反刍：自动注入 userId 以生成日记/心迹 */
-  async reflect(userId: string): Promise<ReturnType<HeadlessMuninn['reflect']>> {
+  async reflect(userId: string): Promise<Awaited<ReturnType<HeadlessMuninn['reflect']>>> {
     return this.withLock(userId, (e) => e.reflect(userId))
   }
 

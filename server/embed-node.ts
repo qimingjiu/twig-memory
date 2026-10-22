@@ -153,10 +153,15 @@ const normalize = (v: number[]): number[] => {
   return v.map((x) => x / n)
 }
 
-async function embedBatch(texts: string[], model: string, baseUrl: string, apiKey: string): Promise<number[][]> {
+/** Runtime callers may bound latency; evaluation keeps its existing retry policy. */
+export interface EmbedOptions { signal?: AbortSignal; maxRetries?: number }
+
+async function embedBatch(texts: string[], model: string, baseUrl: string, apiKey: string, options: EmbedOptions = {}): Promise<number[][]> {
   const payload = texts.map((t) => t.length > MAX_EMBED_CHARS ? t.slice(0, MAX_EMBED_CHARS) : t)
   let lastErr: unknown = null
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  const maxRetries = options.maxRetries ?? MAX_RETRIES
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    options.signal?.throwIfAborted()
     if (attempt > 0) await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** (attempt - 1)))
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
@@ -165,9 +170,9 @@ async function embedBatch(texts: string[], model: string, baseUrl: string, apiKe
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ model, input: payload }),
-        signal: ctrl.signal,
+        signal: options.signal ? AbortSignal.any([ctrl.signal, options.signal]) : ctrl.signal,
       })
-      if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
+      if ((resp.status === 429 || resp.status >= 500) && attempt < maxRetries) {
         lastErr = new Error(`HTTP ${resp.status}（嵌入限流/服务端错误，退避重试）`)
         continue
       }
@@ -186,7 +191,7 @@ async function embedBatch(texts: string[], model: string, baseUrl: string, apiKe
       })
     } catch (err) {
       lastErr = err
-      if (attempt >= MAX_RETRIES) break
+      if (options.signal?.aborted || attempt >= maxRetries) break
     } finally {
       clearTimeout(timer)
     }
@@ -201,7 +206,8 @@ async function embedBatch(texts: string[], model: string, baseUrl: string, apiKe
  *          每批落盘，中断只损失当前实例。不传走遗留单文件缓存（core.ts 引擎路径）。
  * 迁移：分片查不到时回查遗留 embed-cache.json，命中则懒拷贝到分片——老数据不浪费。
  */
-export async function embedTexts(texts: string[], shardId?: string): Promise<number[][]> {
+export async function embedTexts(texts: string[], shardId?: string, options: EmbedOptions = {}): Promise<number[][]> {
+  options.signal?.throwIfAborted()
   loadEnvLocal()
   const apiKey = process.env.SF_API_KEY || process.env.SILICONFLOW_API_KEY
   if (!apiKey) throw new Error('缺 SF_API_KEY / SILICONFLOW_API_KEY')
@@ -224,10 +230,11 @@ export async function embedTexts(texts: string[], shardId?: string): Promise<num
   const pending: { i: number; text: string }[] = []
   out.forEach((v, i) => { if (!v) pending.push({ i, text: texts[i] }) })
   if (pending.length > 0) {
-    console.log(`[embed] ${texts.length} 条文本，缓存命中 ${texts.length - pending.length}，待嵌入 ${pending.length}（model=${model}${shardId ? `, shard=${shardId}` : ''}）`)
+    // stdout is reserved for MCP JSON-RPC when called from the stdio server.
+    console.error(`[embed] ${texts.length} 条文本，缓存命中 ${texts.length - pending.length}，待嵌入 ${pending.length}（model=${model}${shardId ? `, shard=${shardId}` : ''}）`)
     for (let b = 0; b < pending.length; b += BATCH_SIZE) {
       const chunk = pending.slice(b, b + BATCH_SIZE)
-      const vecs = await embedBatch(chunk.map((c) => c.text), model, baseUrl, apiKey)
+      const vecs = await embedBatch(chunk.map((c) => c.text), model, baseUrl, apiKey, options)
       chunk.forEach((c, j) => {
         store[cacheKey(model, c.text)] = vecs[j]
         out[c.i] = vecs[j]

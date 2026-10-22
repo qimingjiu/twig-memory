@@ -1,6 +1,6 @@
 {
   "name": "twig-memory",
-  "version": "0.1.0",
+  "version": "0.3.2",
   "description": "衔枝 Twig · 叙事记忆引擎 — 让 AI 在长程关系中记住「你」，而不只是聊天记录",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,9 @@
     "server:mcp": "tsx server/mcp.ts",
     "server:aml": "tsx server/aml.ts",
     "aml:selfcheck": "tsx server/aml-selfcheck.ts",
-    "aml:replay": "tsx server/aml-replay.ts"
+    "aml:replay": "tsx server/aml-replay.ts",
+    "test:recall": "node --import tsx --test server/fragments.test.ts",
+    "typecheck:server": "tsc --noEmit --target ES2023 --module ESNext --moduleResolution bundler --skipLibCheck --strict --esModuleInterop --types node server/fragments.test.ts server/http.ts server/eval-locomo.ts server/eval-longmemeval.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

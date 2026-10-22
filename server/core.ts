@@ -783,7 +783,7 @@ export class HeadlessMuninn {
     try {
       // env 在 reflect 时读取而非模块加载时——http/mcp 入口的 loadEnvLocal 可能晚于本模块求值
       const adversaryModel = process.env.MUNINN_ADVERSARY_MODEL || undefined
-      const fragmentsForSearch = this.state.fragments.filter((f) => !f.shadow).slice(0, 40).map(fragView)
+      const fragmentsForSearch = this.state.fragments.filter((f) => !f.shadow).slice(0, 40).map((f) => fragView(f))
       // 审计对象：active 论断，被挑战次数少者优先（新论断先过堂）；上限 5 条控成本
       const targets = this.state.claims
         .filter((c) => c.status === 'active')
@@ -861,7 +861,7 @@ export class HeadlessMuninn {
         }).slice(0, 20)
         if (candidates.length < REMENTION_NEW_EVIDENCE_MIN) continue
 
-        const judged = await judgeEvidenceRelevance(claim.text, candidates.map(fragView))
+        const judged = await judgeEvidenceRelevance(claim.text, candidates.map((f) => fragView(f)))
         const candidateIds = new Set(candidates.map((f) => f.id))
         const supporting = (judged?.supportingIds ?? []).filter((id) => candidateIds.has(id))
         if (supporting.length < REMENTION_NEW_EVIDENCE_MIN) continue
@@ -1108,7 +1108,7 @@ export class HeadlessMuninn {
       try {
         verdict = await adjudicateWindowValidation(
           claim.text,
-          clean.map(fragView),
+          clean.map((f) => fragView(f)),
           excluded,
         )
       } catch {
@@ -1167,7 +1167,7 @@ export class HeadlessMuninn {
    */
   async auditDrift(): Promise<AuditRecord> {
     const samples = Math.min(5, Math.max(2, Number(process.env.MUNINN_AUDIT_SAMPLES) || 3))
-    const fragments = this.state.fragments.filter((f) => !f.shadow).slice(0, 40).map(fragView)
+    const fragments = this.state.fragments.filter((f) => !f.shadow).slice(0, 40).map((f) => fragView(f))
     if (fragments.length === 0) throw new Error('碎片库为空，无从盲推导')
 
     const runs: BlindDerivation[] = []
@@ -1432,7 +1432,7 @@ function renderPromptText(
     for (const c of claims) lines.push(`- ${c.text}（${c.conviction.toFixed(2)}）${c.boundary ? `｜边界：${c.boundary}` : ''}`)
   }
   if (fragments.length > 0) {
-    lines.push('近期事件：')
+    lines.push('近期事件（仅最近 5 条，非全部历史）：')
     for (const f of fragments) lines.push(`- ${f.date} ${f.title}`)
   }
   if (recentStamps && recentStamps.length > 0) {

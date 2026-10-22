@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.2] – 2026-10-23
+
+### 修复运行时历史碎片不可达
+
+- MCP 新增 `memory_list_fragments` / `memory_search_fragments`；HTTP 新增 `GET /v1/fragments` / `GET /v1/search`，两种接入共用只读服务。
+- 从评测模块提取无副作用的 BM25 / 向量排序 / RRF 原语，保留评测原有英文分词、零分兜底与排序口径；运行时增加中文相邻双字分词，排除零分词法结果。
+- 检索覆盖全部非影子碎片（包括近期窗口之外的历史），保留完整正文与本人修正；分页可显式查看影子碎片。显式查事实不会修改或唤醒 SILENT 线索。
+- 有嵌入 key 时可用向量 RRF 与现有磁盘缓存；无 key 时纯 BM25；向量失败或超过 10 秒预算时降级并报告 `degradedReason`。可用 `MUNINN_SEARCH_EMBED=0` 强制词法查询。运行时不自动调用 HyDE/LLM。
+- MCP 描述与上下文标明「最近 5 条」只是窗口。stdout 留给 MCP JSON-RPC，嵌入日志改发 stderr。
+- 服务端类型检查发现并修正既有 `map(fragView)` 的数组索引误传（避免把索引当作来源标记）以及 `reflect` 返回类型的重复 Promise 声明。
+- 增加离线回归：中文旧事、分页、修正、隔离、降级、缓存、HTTP 鉴权、远程 MCP / stdio 与持久化重启。
+
+状态文件格式不变，无需迁移。更新代码并重启服务，再让 MCP 客户端重连以刷新工具列表；详见 `server/README.md`。
+
 ## [Unreleased]
 
 ### 临水轩 · 古风前端全线开馆（2026-09-10 ~ 09-11）
