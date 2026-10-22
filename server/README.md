@@ -11,6 +11,8 @@ server/
   manager.ts    多用户引擎管理：按需加载、变更落盘
   llm-node.ts   Node 端直连 Moonshot（注入到 visualizer/engine/llm 的传输层）
   embed-node.ts 硅基流动嵌入 + 磁盘缓存（碰撞候选向量召回、评测混合检索）
+  retrieval.ts  评测/运行时共享的纯检索原语（BM25 / 向量排序 / RRF）
+  services/fragments.ts 历史碎片分页与查询（MCP / HTTP 共用）
   http.ts       HTTP API（零依赖 node:http）+ 远程 MCP 端点
   mcp.ts        MCP server（stdio，Codex / Claude Code 等可直接挂载）
   host-loop.ts  参考宿主闭环（/v1/chat）：注入上下文包 → 作答 → 自动 ingest
@@ -40,6 +42,8 @@ KIMI_API_KEY=sk-你的-Moonshot-API-Key
 |---|---|---|
 | POST | `/v1/ingest` | `{ userId, text, title?, tags?[] }` 登记事件并做碰撞判定 |
 | GET | `/v1/context?userId=` | 叙事上下文包；`promptText` 注入位置按接入形态选（两法等价），见下文「宿主 agent 的典型接法」 |
+| GET | `/v1/fragments?userId=&page=1&limit=50&includeShadow=false` | 历史碎片分页，最新在前；limit 上限 500，默认排除影子碎片 |
+| GET | `/v1/search?userId=&q=&k=8` | 全部非影子碎片检索，k 上限 20；BM25 / 向量 RRF，返回完整正文与修正 |
 | GET | `/v1/state?userId=` | 完整三层状态（调试/可视化用；支持 `page`/`limit` 对碎片分页） |
 | GET | `/v1/claims?userId=` | 认知层论断列表（用户默认全透明可见） |
 | POST | `/v1/contest` | `{ userId, claimId, note }` 用户否决 → contested（不删除、不假改） |
@@ -123,7 +127,35 @@ args = ["tsx", "D:/kimi/workspace/muninn/server/mcp.ts"]
 # env = { KIMI_API_KEY = "sk-..." }
 ```
 
-工具：`memory_ingest` / `memory_context` / `memory_list_claims` / `memory_contest_claim` / `memory_reflect` / `memory_audit` / `memory_start_window` / `memory_note_intervention` / `memory_correct_fragment`。
+工具：`memory_ingest` / `memory_context` / `memory_list_fragments` / `memory_search_fragments` / `memory_list_claims` / `memory_contest_claim` / `memory_reflect` / `memory_audit` / `memory_start_window` / `memory_note_intervention` / `memory_correct_fragment`。
+
+## 历史碎片查询（v0.3.2）
+
+`memory_context.recentFragments` 只展示最近 5 条非影子事件，线索/论断也只是有界摘要，不能据此判断旧事丢失。用户问起过去的事实时，宿主应先查询历史；若未命中，换关键词或逐页查账，不要把一次未命中当作遗忘。
+
+```json
+{"name":"memory_search_fragments","arguments":{"userId":"你的用户ID","query":"换电脑","k":8}}
+{"name":"memory_list_fragments","arguments":{"userId":"你的用户ID","page":1,"limit":50}}
+```
+
+- 分页返回 `{ fragments, totalFragments, page, limit }`，顺序为存储序（最新在前）；总数与 `includeShadow` 过滤一致。每条含 `id/date/title/body/threadIds/correction?`，正文保留原文，修正单独附带。
+- 检索返回 `{ hits, mode, degradedReason? }`；每条含 `id/date/title/body/threadIds/correction?/score`。检索与返回的完整正文包含 `〔本人修正：…〕`，避免只召回已被本人更正的旧说法。`score` 是排序分数，不是事实置信度；BM25 与 RRF 分数不跨模式比较。
+- 中文使用相邻双字分词，英文、日期和碎片 ID 可直接查询。无嵌入 key 时零外部 API 调用；词法零命中返回空数组。检索不改写、衰减、删除或唤醒任何记忆/线索。
+- 已配置 `SF_API_KEY` / `SILICONFLOW_API_KEY` 时默认启用向量 RRF，沿用 `MUNINN_EMBED_MODEL` 与 `MUNINN_EMBED_CACHE`。重复的同模型文本/查询命中磁盘缓存；新增文本、修正或换模型会产生新的嵌入。首次大库构建可能超时，已完成的批次会保留缓存，下次查询继续补齐。向量路总预算 10 秒、无重试；失败返回 BM25 并带 `degradedReason=embeddings_unavailable`。
+- `MUNINN_SEARCH_EMBED=0` 可强制词法查询，不影响引擎原有碰撞候选向量召回。运行时不自动调用 HyDE/LLM；评测的查询扩写管线保持原样，不能把评测分数直接当作运行时召回率。
+- 查询参数校验两端一致：`userId/query` 不得为空，query 最长 2000 字符，page/limit/k 为范围内正整数。HTTP 的 `includeShadow` 只接受 `true` / `false`。
+
+升级：在既有服务代码目录执行 `git pull --ff-only`，按原部署方式重启（容器部署需重新构建镜像），然后在手机 MCP 客户端断开并重连，确认工具列表出现上述两个工具。状态 JSON **格式不变、无需迁移**。挂载卷保持原路径。
+
+本修复提供历史访问入口；仅注入 `/v1/context` 的自定义宿主仍需接入 `/v1/search` 或新 MCP 工具，`/v1/chat` 参考闭环不会自动扩展为完整历史检索。
+
+离线验收：
+
+```bash
+npm run test:recall
+npm run typecheck:server
+MUNINN_TZ=UTC npx tsx server/dev-smoke.ts  # 旧 smoke fixture 使用 UTC 日期
+```
 
 ## 部署到 Zeabur（作为记忆后端）
 

@@ -59,6 +59,7 @@ import * as Note from './services/notes'
 import * as Stamp from './services/stamps'
 import { isValidStampType } from '../shared/stamps'
 import { generateJournalDraft, generateNoteDraft } from '../visualizer/engine/llm'
+import { listFragments, listFragmentsSchema, searchFragments, searchFragmentsSchema } from './services/fragments'
 
 const PORT = Number(process.env.PORT || 7300)
 const AUTH_TOKEN = process.env.MUNINN_AUTH_TOKEN || ''
@@ -351,6 +352,29 @@ const server = createServer(async (req, res) => {
       if (!userId) return send(res, 400, { error: 'userId 必填' })
       const packet = manager.get(userId).getContextPacket(userId)
       return send(res, 200, packet)
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/fragments') {
+      const raw = Object.fromEntries(url.searchParams)
+      const parsed = listFragmentsSchema.safeParse({
+        userId,
+        page: raw.page === undefined ? undefined : Number(raw.page),
+        limit: raw.limit === undefined ? undefined : Number(raw.limit),
+        includeShadow: raw.includeShadow === undefined ? undefined
+          : raw.includeShadow === 'true' ? true : raw.includeShadow === 'false' ? false : raw.includeShadow,
+      })
+      if (!parsed.success) return send(res, 400, { error: parsed.error.message })
+      if (!checkRate(req, parsed.data.userId)) return send(res, 429, { error: '请求过于频繁' })
+      return send(res, 200, listFragments(manager.get(parsed.data.userId).getState().fragments, parsed.data))
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/search') {
+      const rawK = url.searchParams.get('k')
+      const parsed = searchFragmentsSchema.safeParse({ userId, query: url.searchParams.get('q'), k: rawK === null ? undefined : Number(rawK) })
+      if (!parsed.success) return send(res, 400, { error: parsed.error.message })
+      if (!checkRate(req, parsed.data.userId)) return send(res, 429, { error: '请求过于频繁' })
+      const { query, k } = parsed.data
+      return send(res, 200, await searchFragments(manager.get(parsed.data.userId).getState().fragments, query, k))
     }
 
     if (req.method === 'GET' && url.pathname === '/v1/state') {
